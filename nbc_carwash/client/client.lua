@@ -1,3 +1,5 @@
+local ESX = exports['es_extended']:getSharedObject()
+
 -- Laden der Konfigurationsdatei
 Config = {}
 Config.CarWash = { positions = {} }
@@ -25,7 +27,16 @@ local function createBlip(coord)
     return blip
 end
 
--- Funktion zum erstellen des Markers
+-- Funktion zum Abrufen des Waschtextes basierend auf dem Preis
+function getWashText()
+    if Config.Price and Config.Price > 0 then
+        return string.format(Config.CarWash.washTextWithPrice, Config.Price)
+    else
+        return Config.CarWash.washText
+    end
+end
+
+-- Funktion zum Erstellen des Markers
 local function createMarker(coord, size)
     local markerConfig = Config.CarWash.marker
     DrawMarker(
@@ -45,7 +56,7 @@ local function createMarker(coord, size)
 end
 
 -- Funktion zum Zeichnen von 3D-Text
-local function drawText3D(x, y, z, text)
+function DrawText3D(x, y, z, text)
     local onScreen, _x, _y = World3dToScreen2d(x, y, z)
     local px, py, pz = table.unpack(GetGameplayCamCoords())
     
@@ -62,91 +73,16 @@ local function drawText3D(x, y, z, text)
     DrawRect(_x, _y + 0.0125, 0.015 + factor, 0.03, 41, 11, 41, 68)
 end
 
--- Erstellen von Markern und Anzeigen von Text an CarWash-Positionen
-Citizen.CreateThread(function()
-    while true do
-        Citizen.Wait(0)
-        local playerCoords = GetEntityCoords(PlayerPedId())
-        for _, location in ipairs(Config.CarWash.positions) do
-            local coord = location.coord
-            local size = location.size
-            if Vdist(playerCoords, coord.x, coord.y, coord.z) < 10.0 then -- Sichtbarkeit auf 10.0 erhöht
-                createMarker(coord, size)
-                drawText3D(coord.x, coord.y, coord.z + 0.5, Config.CarWash.washText) -- Text aus Config anzeigen
-                if Vdist(playerCoords, coord.x, coord.y, coord.z) < 5.0 then -- Interaktionsreichweite bleibt bei 5.0
-                    if IsControlJustReleased(1, 51) then -- E Taste
-                    end
-                end
-            end
-        end
-    end
-end)
-
-local isWashing = false
-
-for _, v in pairs(Config.CarWash.positions) do
-    v.blip = createBlip(v.coord)
-
-    local zone = lib.zones.box({
-        coords = v.coord,
-        size = v.size,
-        rotation = v.rot,
-        debug = v.debug,
-    })
-    v.zone = zone
-
-    function zone:onEnter()
-        if not IsPedInAnyVehicle(cache.ped, false) then
-            return
-        end
-        if Config.useRadial then
-            lib.addRadialItem({
-                id = 'carwash',
-                icon = Config.radialData.icon,
-                label = Config.radialData.label,
-                onSelect = function()
-                    TriggerEvent('nbw_carwash:CanWash')
-                end
-            })
-            if Config.radialData.useNotify then
-                lib.notify({
-                    title = Config.radialData.NotifyTitle,
-                    description = Config.radialData.NotifyDescription,
-                    type = Config.radialData.NotifyType,
-                    duration = Config.radialData.NotifyDuration,
-                })
-            end
-            return
-        end
-    end
-
-    function zone:inside()
-        if not IsPedInAnyVehicle(cache.ped, false) then
-            return
-        end
-        if Config.useRadial then
-            return
-        end
-        if IsControlJustReleased(0, 38) then
-            TriggerEvent('nbw_carwash:CanWash')
-        end
-    end
-end
-
-AddEventHandler('nbw_carwash:CanWash', function()
-    TriggerServerEvent('nbw_carwash:checkWash')
-end)
-
--- Funktion für die Wäsche
-function startWash()
-    -- Prüfe, ob die Wäsche bereits läuft
-    if isWashing then
+-- Funktion, die den Autowaschvorgang startet
+function carwash()
+    -- Prüfe, ob die Wäsche bereits läuft oder der Spieler nicht in einem Fahrzeug ist
+    if isWashing or not IsPedInAnyVehicle(PlayerPedId(), false) then
         return
     end
 
     -- Setze den Wasch-Status auf "laufend"
     isWashing = true
-    local vehicle = GetVehiclePedIsIn(cache.ped)
+    local vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
     local dist = 'cut_family2'
     local fxName = 'cs_fam2_ped_water_splash'
     FreezeEntityPosition(vehicle, true)
@@ -157,7 +93,7 @@ function startWash()
         Wait(1)
     end
     UseParticleFxAssetNextCall(dist)
-    local particle = StartParticleFxLoopedAtCoord(fxName, GetEntityCoords(cache.ped), 0.0, 0.0, 0.0, 8.0, false, false, false, 0)
+    local particle = StartParticleFxLoopedAtCoord(fxName, GetEntityCoords(PlayerPedId()), 0.0, 0.0, 0.0, 8.0, false, false, false, 0)
 
     -- Zeige Fortschrittsanzeige an
     if lib.progressCircle({
@@ -188,9 +124,96 @@ function startWash()
 
         -- Zeige ESX Benachrichtigung an
         TriggerEvent('esx:showNotification', Config.CarWash.washCompletionMessage, 'success')
+        
+        -- Sende eine Anfrage an den Server, um den Preis abzuziehen, wenn Preis > 0
+        if Config.Price and Config.Price > 0 then
+            TriggerServerEvent('carwash:chargePlayer', Config.Price)
+        end
     end
 end
 
--- Registriere das Event
-RegisterNetEvent('nbw_carwash:startWash', startWash)
+-- Event-Handler für das Starten der Autowäsche
+AddEventHandler('nbw_carwash:startWash', carwash)
 
+-- Funktion zur Überprüfung, ob der Spieler das Auto waschen kann
+AddEventHandler('nbw_carwash:CanWash', function()
+    TriggerServerEvent('nbw_carwash:checkWash')
+end)
+
+-- Hauptthread zum Erstellen von Markern und Anzeigen von Text an CarWash-Positionen
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(0)
+        
+        -- Hier sollte die Logik sein, um zu überprüfen, ob der Spieler in der Nähe der Waschanlage ist
+        local playerPed = PlayerPedId()
+        local playerCoords = GetEntityCoords(playerPed)
+
+        for _, washLocation in pairs(Config.CarWash.positions) do
+            if IsPedInAnyVehicle(playerPed, false) then
+                local distance = #(playerCoords - washLocation.coord)
+                if distance < 10.0 then -- Sichtbarkeit auf 10.0 erhöht
+                    createMarker(washLocation.coord, washLocation.size)
+                    DrawText3D(washLocation.coord.x, washLocation.coord.y, washLocation.coord.z + 0.5, getWashText()) -- Text aus Config anzeigen
+                    if distance < 5.0 then -- Interaktionsreichweite bleibt bei 5.0
+                        if IsControlJustReleased(0, 38) then -- E Taste
+                            carwash()
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local isWashing = false
+
+-- Erstellen von Blips und Zonen für die Waschanlagen
+for _, v in pairs(Config.CarWash.positions) do
+    v.blip = createBlip(v.coord)
+
+    local zone = lib.zones.box({
+        coords = v.coord,
+        size = v.size,
+        rotation = v.rot,
+        debug = v.debug,
+    })
+    v.zone = zone
+
+    function zone:onEnter()
+        if not IsPedInAnyVehicle(PlayerPedId(), false) then
+            return
+        end
+        if Config.useRadial then
+            lib.addRadialItem({
+                id = 'carwash',
+                icon = Config.radialData.icon,
+                label = Config.radialData.label,
+                onSelect = function()
+                    TriggerEvent('nbw_carwash:CanWash')
+                end
+            })
+            if Config.radialData.useNotify then
+                lib.notify({
+                    title = Config.radialData.NotifyTitle,
+                    description = Config.radialData.NotifyDescription,
+                    type = Config.radialData.NotifyType,
+                    duration = Config.radialData.NotifyDuration,
+                })
+            end
+            return
+        end
+    end
+
+    function zone:inside()
+        if not IsPedInAnyVehicle(PlayerPedId(), false) then
+            return
+        end
+        if Config.useRadial then
+            return
+        end
+        if IsControlJustReleased(0, 38) then
+            TriggerEvent('nbw_carwash:CanWash')
+        end
+    end
+end

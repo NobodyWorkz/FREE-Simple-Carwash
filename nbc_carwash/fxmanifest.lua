@@ -11,10 +11,16 @@ client_scripts {
 }
 
 server_scripts {
+    '@es_extended/locale.lua', -- Stellt sicher, dass es_extended zuerst geladen wird
     'shared/config.lua',
     'server/server.lua'
 }
 
 shared_scripts {
-    '@ox_lib/init.lua'
+    '@ox_lib/init.lua',
+    'shared/config.lua'
+}
+
+dependencies {
+    'es_extended'
 }
