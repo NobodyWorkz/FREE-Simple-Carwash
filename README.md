@@ -11,6 +11,6 @@ Key Features
 - Progress display
 - Particle effects for a realistic touch
 
-If you have any questions or requests, please feel free to open a ticket on ⁠🎫｜ticket. We are happy to assist you!
+If you have any questions or requests, please feel free to open a ticket on ⁠our Discord. We are happy to assist you!
 
 Important Note: Should you encounter any bugs or issues, please report them promptly so we can address them.
