@@ -1,20 +1,6 @@
 local ESX = exports['es_extended']:getSharedObject()
+local isWashing = false
 
--- Laden der Konfigurationsdatei
-Config = {}
-Config.CarWash = { positions = {} }
-
--- Funktion zum Laden der Konfigurationsdatei
-function LoadConfig()
-    -- Hier wird angenommen, dass die config.lua im shared Verzeichnis liegt
-    local configFile = LoadResourceFile(GetCurrentResourceName(), 'shared/config.lua')
-    assert(load(configFile))()
-end
-
--- Konfigurationsdatei laden
-LoadConfig()
-
--- Erstellen des Blips auf der Karte
 local function createBlip(coord)
     local blip = AddBlipForCoord(coord.x, coord.y, coord.z)
 
@@ -75,12 +61,10 @@ end
 
 -- Funktion, die den Autowaschvorgang startet
 function carwash()
-    -- Prüfe, ob die Wäsche bereits läuft oder der Spieler nicht in einem Fahrzeug ist
     if isWashing or not IsPedInAnyVehicle(PlayerPedId(), false) then
         return
     end
 
-    -- Setze den Wasch-Status auf "laufend"
     isWashing = true
     local vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
     local dist = 'cut_family2'
@@ -124,49 +108,47 @@ function carwash()
 
         -- Zeige ESX Benachrichtigung an
         TriggerEvent('esx:showNotification', Config.CarWash.washCompletionMessage, 'success')
-        
-        -- Sende eine Anfrage an den Server, um den Preis abzuziehen, wenn Preis > 0
-        if Config.Price and Config.Price > 0 then
-            TriggerServerEvent('carwash:chargePlayer', Config.Price)
-        end
     end
 end
 
--- Event-Handler für das Starten der Autowäsche
-AddEventHandler('nbw_carwash:startWash', carwash)
-
--- Funktion zur Überprüfung, ob der Spieler das Auto waschen kann
-AddEventHandler('nbw_carwash:CanWash', function()
-    TriggerServerEvent('nbw_carwash:checkWash')
-end)
-
--- Hauptthread zum Erstellen von Markern und Anzeigen von Text an CarWash-Positionen
 Citizen.CreateThread(function()
     while true do
-        Citizen.Wait(0)
+        Citizen.Wait(1)
         
         -- Hier sollte die Logik sein, um zu überprüfen, ob der Spieler in der Nähe der Waschanlage ist
         local playerPed = PlayerPedId()
         local playerCoords = GetEntityCoords(playerPed)
+        local near = false
 
         for _, washLocation in pairs(Config.CarWash.positions) do
             if IsPedInAnyVehicle(playerPed, false) then
                 local distance = #(playerCoords - washLocation.coord)
-                if distance < 10.0 then -- Sichtbarkeit auf 10.0 erhöht
+                if distance <= 10.0 then -- Sichtbarkeit auf 10.0 erhöht
+                    near = true
                     createMarker(washLocation.coord, washLocation.size)
                     DrawText3D(washLocation.coord.x, washLocation.coord.y, washLocation.coord.z + 0.5, getWashText()) -- Text aus Config anzeigen
                     if distance < 5.0 then -- Interaktionsreichweite bleibt bei 5.0
                         if IsControlJustReleased(0, 38) then -- E Taste
-                            carwash()
+                            if not isWashing then
+                                ESX.TriggerServerCallback('carwash:check', function(canWash)
+                                    if canWash then
+                                        carwash()
+                                    else
+                                        TriggerEvent('esx:showNotification', Config.CarWash.notEnoughMoneyMessage, 'error')
+                                    end
+                                end)
+                            end
                         end
                     end
                 end
             end
         end
+
+        if not near then
+            Wait(1000)
+        end
     end
 end)
-
-local isWashing = false
 
 -- Erstellen von Blips und Zonen für die Waschanlagen
 for _, v in pairs(Config.CarWash.positions) do
@@ -190,7 +172,9 @@ for _, v in pairs(Config.CarWash.positions) do
                 icon = Config.radialData.icon,
                 label = Config.radialData.label,
                 onSelect = function()
-                    TriggerEvent('nbw_carwash:CanWash')
+                    if not isWashing then
+                        carwash()
+                    end
                 end
             })
             if Config.radialData.useNotify then
@@ -213,7 +197,15 @@ for _, v in pairs(Config.CarWash.positions) do
             return
         end
         if IsControlJustReleased(0, 38) then
-            TriggerEvent('nbw_carwash:CanWash')
+            if not isWashing then
+                ESX.TriggerServerCallback('carwash:check', function(canWash)
+                    if canWash then
+                        carwash()
+                    else
+                        TriggerEvent('esx:showNotification', Config.CarWash.notEnoughMoneyMessage, 'error')
+                    end
+                end)
+            end
         end
     end
 end
